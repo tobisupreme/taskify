@@ -1,18 +1,33 @@
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication } from '@nestjs/common';
 import * as request from 'supertest';
+import { PrismaService } from '../src/prisma/prisma.service';
 import { AppModule } from './../src/app.module';
 
 describe('Authentication (e2e)', () => {
   let app: INestApplication;
+  let prisma: PrismaService;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
     await app.init();
+
+    prisma = app.get(PrismaService);
+  });
+
+  beforeEach(async () => {
+    await prisma.comment.deleteMany();
+    await prisma.task.deleteMany();
+    await prisma.user.deleteMany();
+  });
+
+  afterAll(async () => {
+    await app.close();
   });
 
   it('/auth/register (POST) - should register a new user', () => {
@@ -25,9 +40,5 @@ describe('Authentication (e2e)', () => {
         expect(res.body).toHaveProperty('email', 'test@example.com');
         expect(res.body).not.toHaveProperty('password');
       });
-  });
-
-  afterAll(async () => {
-    await app.close();
   });
 });
