@@ -3,6 +3,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import * as bcrypt from 'bcryptjs';
 import * as request from 'supertest';
+import { PrismaClientExceptionFilter } from '../src/common/filters/prisma-exception.filter';
 import { NotificationsProducerService } from '../src/notifications/producer/producer.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { AppModule } from './../src/app.module';
@@ -55,6 +56,7 @@ describe('App (e2e)', () => {
 
     app = moduleFixture.createNestApplication();
     app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
+    app.useGlobalFilters(new PrismaClientExceptionFilter());
     await app.init();
 
     prisma = app.get(PrismaService);
@@ -217,7 +219,7 @@ describe('App (e2e)', () => {
             expect(body.page).toBe(2);
             expect(body.limit).toBe(5);
             expect(body.data.length).toBe(5);
-            expect(body.data[0].title).toBe('Task 6'); // Assuming default order
+            expect(body.data[0].title).toBe('Task 6');
           });
       });
 
@@ -634,6 +636,31 @@ describe('App (e2e)', () => {
           expect(body.data.length).toBe(5);
           expect(body.data[0].content).toBe('Comment 6');
         });
+    });
+
+    it('should return 404 when trying to add a comment to a non-existent task', async () => {
+      const hashedPassword = await bcrypt.hash('password123', 10);
+      await prisma.user.create({
+        data: {
+          email: 'comment-fail-user@example.com',
+          password: hashedPassword,
+        },
+      });
+
+      const loginRes = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: 'comment-fail-user@example.com',
+          password: 'password123',
+        });
+
+      const accessToken = (loginRes.body as LoginResponse).access_token;
+
+      return request(app.getHttpServer())
+        .post('/tasks/999/comments')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ content: 'This should fail' })
+        .expect(404);
     });
   });
 });
