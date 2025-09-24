@@ -1,12 +1,16 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { User } from '@prisma/client';
+import { Status, User } from '@prisma/client';
+import { NotificationsProducerService } from '../notifications/producer/producer.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 
 @Injectable()
 export class TasksService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notificationsProducer: NotificationsProducerService,
+  ) {}
 
   async create(createTaskDto: CreateTaskDto, user: User) {
     return this.prisma.task.create({
@@ -42,12 +46,20 @@ export class TasksService {
   async update(id: number, updateTaskDto: UpdateTaskDto, user: User) {
     const task = await this.findOne(id, user);
 
-    return this.prisma.task.update({
+    const updatedTask = await this.prisma.task.update({
       where: {
         id: task.id,
       },
       data: updateTaskDto,
     });
+
+    if (updatedTask.status === Status.COMPLETED) {
+      await this.notificationsProducer.enqueueTaskCompletedNotification(
+        updatedTask,
+      );
+    }
+
+    return updatedTask;
   }
 
   async remove(id: number, user: User) {

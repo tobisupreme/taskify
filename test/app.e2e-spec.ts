@@ -4,8 +4,13 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { Task } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import * as request from 'supertest';
+import { NotificationsProducerService } from '../src/notifications/producer/producer.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { AppModule } from './../src/app.module';
+
+const mockNotificationsProducerService = {
+  enqueueTaskCompletedNotification: jest.fn(),
+};
 
 interface LoginResponse {
   access_token: string;
@@ -25,7 +30,10 @@ describe('App (e2e)', () => {
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(NotificationsProducerService)
+      .useValue(mockNotificationsProducerService)
+      .compile();
 
     app = moduleFixture.createNestApplication();
     app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
@@ -38,6 +46,7 @@ describe('App (e2e)', () => {
     await prisma.comment.deleteMany();
     await prisma.task.deleteMany();
     await prisma.user.deleteMany();
+    jest.clearAllMocks();
   });
 
   afterAll(async () => {
@@ -293,6 +302,42 @@ describe('App (e2e)', () => {
           .set('Authorization', `Bearer ${accessToken}`)
           .send({ title: 'Updated by another user' })
           .expect(404);
+      });
+
+      it('should enqueue a background job when a task is completed', async () => {
+        const hashedPassword = await bcrypt.hash('password123', 10);
+        const user = await prisma.user.create({
+          data: {
+            email: 'complete-task@example.com',
+            password: hashedPassword,
+          },
+        });
+
+        const loginRes = await request(app.getHttpServer())
+          .post('/auth/login')
+          .send({
+            email: 'complete-task@example.com',
+            password: 'password123',
+          });
+
+        const accessToken = (loginRes.body as LoginResponse).access_token;
+
+        const task = await prisma.task.create({
+          data: {
+            title: 'Task to be completed',
+            ownerId: user.id,
+          },
+        });
+
+        await request(app.getHttpServer())
+          .patch(`/tasks/${task.id}`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .send({ status: 'COMPLETED' })
+          .expect(200);
+
+        expect(
+          mockNotificationsProducerService.enqueueTaskCompletedNotification,
+        ).toHaveBeenCalledWith(expect.objectContaining({ id: task.id }));
       });
     });
 
