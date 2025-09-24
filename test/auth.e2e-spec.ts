@@ -41,4 +41,18 @@ describe('Authentication (e2e)', () => {
         expect(res.body).not.toHaveProperty('password');
       });
   });
+
+  it('/auth/login (POST) - should log in a user and return an access token', async () => {
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({ email: 'test@example.com', password: 'password123' });
+
+    return request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: 'test@example.com', password: 'password123' })
+      .expect(200)
+      .then((res) => {
+        expect(res.body).toHaveProperty('access_token');
+      });
+  });
 });
