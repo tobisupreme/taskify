@@ -29,6 +29,18 @@ interface PaginatedTaskResponse {
   limit: number;
 }
 
+interface CommentResponse {
+  id: number;
+  content: string;
+}
+
+interface PaginatedCommentResponse {
+  data: CommentResponse[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
 describe('App (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
@@ -537,6 +549,91 @@ describe('App (e2e)', () => {
           .set('Authorization', `Bearer ${accessToken}`)
           .expect(404);
       });
+    });
+  });
+
+  describe('Comments', () => {
+    it('should add a comment to a task', async () => {
+      const hashedPassword = await bcrypt.hash('password123', 10);
+      const user = await prisma.user.create({
+        data: {
+          email: 'comment-user@example.com',
+          password: hashedPassword,
+        },
+      });
+
+      const loginRes = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: 'comment-user@example.com', password: 'password123' });
+
+      const accessToken = (loginRes.body as LoginResponse).access_token;
+
+      const task = await prisma.task.create({
+        data: {
+          title: 'Task to be commented on',
+          ownerId: user.id,
+        },
+      });
+
+      return request(app.getHttpServer())
+        .post(`/tasks/${task.id}/comments`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ content: 'This is a great task!' })
+        .expect(201)
+        .then((res) => {
+          const body = res.body as CommentResponse;
+          expect(body).toHaveProperty('id');
+          expect(body.content).toBe('This is a great task!');
+        });
+    });
+
+    it('should get paginated comments for a task', async () => {
+      const hashedPassword = await bcrypt.hash('password123', 10);
+      const user = await prisma.user.create({
+        data: {
+          email: 'comment-list-user@example.com',
+          password: hashedPassword,
+        },
+      });
+
+      const loginRes = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: 'comment-list-user@example.com',
+          password: 'password123',
+        });
+
+      const accessToken = (loginRes.body as LoginResponse).access_token;
+
+      const task = await prisma.task.create({
+        data: {
+          title: 'Task with many comments',
+          ownerId: user.id,
+        },
+      });
+
+      for (let i = 1; i <= 15; i++) {
+        await prisma.comment.create({
+          data: {
+            content: `Comment ${i}`,
+            taskId: task.id,
+            authorId: user.id,
+          },
+        });
+      }
+
+      return request(app.getHttpServer())
+        .get(`/tasks/${task.id}/comments?page=2&limit=5`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200)
+        .then((res) => {
+          const body = res.body as PaginatedCommentResponse;
+          expect(body.total).toBe(15);
+          expect(body.page).toBe(2);
+          expect(body.limit).toBe(5);
+          expect(body.data.length).toBe(5);
+          expect(body.data[0].content).toBe('Comment 6');
+        });
     });
   });
 });
