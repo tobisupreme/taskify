@@ -1,8 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Status, User } from '@prisma/client';
+import { Prisma, Status, User } from '@prisma/client';
 import { NotificationsProducerService } from '../notifications/producer/producer.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTaskDto } from './dto/create-task.dto';
+import { TaskQueryDto } from './dto/task-query.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 
 @Injectable()
@@ -21,12 +22,50 @@ export class TasksService {
     });
   }
 
-  async findAll(user: User) {
-    return this.prisma.task.findMany({
-      where: {
-        ownerId: user.id,
-      },
-    });
+  async findAll(user: User, query: TaskQueryDto) {
+    const { page, limit, status, search } = query;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.TaskWhereInput = {
+      ownerId: user.id,
+    };
+
+    if (status) {
+      where.status = status;
+    }
+
+    if (search) {
+      where.OR = [
+        {
+          title: {
+            contains: search,
+            mode: 'insensitive',
+          },
+        },
+        {
+          description: {
+            contains: search,
+            mode: 'insensitive',
+          },
+        },
+      ];
+    }
+
+    const [tasks, total] = await this.prisma.$transaction([
+      this.prisma.task.findMany({
+        where,
+        skip,
+        take: limit,
+      }),
+      this.prisma.task.count({ where }),
+    ]);
+
+    return {
+      data: tasks,
+      total,
+      page,
+      limit,
+    };
   }
 
   async findOne(id: number, user: User) {

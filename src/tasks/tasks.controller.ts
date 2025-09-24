@@ -8,6 +8,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
@@ -20,6 +21,7 @@ import {
 import { User } from '@prisma/client';
 import { GetUser } from '../auth/decorator/get-user.decorator';
 import { CreateTaskDto } from './dto/create-task.dto';
+import { TaskQueryDto } from './dto/task-query.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { TasksService } from './tasks.service';
 
@@ -45,8 +47,8 @@ export class TasksController {
   @ApiOperation({ summary: 'Get all tasks for the authenticated user' })
   @ApiResponse({ status: 200, description: 'Return all tasks.' })
   @ApiResponse({ status: 401, description: 'Unauthorized.' })
-  findAll(@GetUser() user: User) {
-    return this.tasksService.findAll(user);
+  findAll(@GetUser() user: User, @Query() taskQuery: TaskQueryDto) {
+    return this.tasksService.findAll(user, taskQuery);
   }
 
   @Get(':id')

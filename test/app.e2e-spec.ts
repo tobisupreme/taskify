@@ -1,7 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { Task } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import * as request from 'supertest';
 import { NotificationsProducerService } from '../src/notifications/producer/producer.service';
@@ -19,8 +18,15 @@ interface LoginResponse {
 interface TaskResponse {
   id: number;
   title: string;
-  description: string;
+  description: string | null;
   status: string;
+}
+
+interface PaginatedTaskResponse {
+  data: TaskResponse[];
+  total: number;
+  page: number;
+  limit: number;
 }
 
 describe('App (e2e)', () => {
@@ -80,7 +86,8 @@ describe('App (e2e)', () => {
         .send({ email: 'test@example.com', password: 'password123' })
         .expect(200)
         .then((res) => {
-          expect(res.body).toHaveProperty('access_token');
+          const body = res.body as LoginResponse;
+          expect(body).toHaveProperty('access_token');
         });
     });
   });
@@ -115,9 +122,10 @@ describe('App (e2e)', () => {
           .send({ title: 'My New Task', description: 'A description' })
           .expect(201)
           .then((res) => {
-            expect(res.body).toHaveProperty('id');
-            expect(res.body).toHaveProperty('title', 'My New Task');
-            expect(res.body).toHaveProperty('status', 'PENDING');
+            const body = res.body as TaskResponse;
+            expect(body).toHaveProperty('id');
+            expect(body).toHaveProperty('title', 'My New Task');
+            expect(body).toHaveProperty('status', 'PENDING');
           });
       });
     });
@@ -150,14 +158,137 @@ describe('App (e2e)', () => {
           .set('Authorization', `Bearer ${accessToken}`)
           .expect(200)
           .then((res) => {
-            const tasks = res.body as Task[];
-            expect(tasks).toBeInstanceOf(Array);
-            expect(tasks.length).toBe(1);
-            expect(tasks[0].title).toBe('Test Task for GET');
+            const body = res.body as PaginatedTaskResponse;
+            expect(body.total).toBe(1);
+            expect(body.page).toBe(1);
+            expect(body.limit).toBe(10);
+            expect(body.data).toBeInstanceOf(Array);
+            expect(body.data.length).toBe(1);
+            expect(body.data[0].title).toBe('Test Task for GET');
+          });
+      });
+
+      it('should return paginated tasks', async () => {
+        const hashedPassword = await bcrypt.hash('password123', 10);
+        const user = await prisma.user.create({
+          data: {
+            email: 'pagination-user@example.com',
+            password: hashedPassword,
+          },
+        });
+
+        const loginRes = await request(app.getHttpServer())
+          .post('/auth/login')
+          .send({
+            email: 'pagination-user@example.com',
+            password: 'password123',
+          });
+
+        const accessToken = (loginRes.body as LoginResponse).access_token;
+
+        for (let i = 1; i <= 15; i++) {
+          await prisma.task.create({
+            data: {
+              title: `Task ${i}`,
+              ownerId: user.id,
+            },
+          });
+        }
+
+        return request(app.getHttpServer())
+          .get('/tasks?page=2&limit=5')
+          .set('Authorization', `Bearer ${accessToken}`)
+          .expect(200)
+          .then((res) => {
+            const body = res.body as PaginatedTaskResponse;
+            expect(body.total).toBe(15);
+            expect(body.page).toBe(2);
+            expect(body.limit).toBe(5);
+            expect(body.data.length).toBe(5);
+            expect(body.data[0].title).toBe('Task 6'); // Assuming default order
+          });
+      });
+
+      it('should filter tasks by status', async () => {
+        const hashedPassword = await bcrypt.hash('password123', 10);
+        const user = await prisma.user.create({
+          data: {
+            email: 'filter-user@example.com',
+            password: hashedPassword,
+          },
+        });
+
+        const loginRes = await request(app.getHttpServer())
+          .post('/auth/login')
+          .send({ email: 'filter-user@example.com', password: 'password123' });
+
+        const accessToken = (loginRes.body as LoginResponse).access_token;
+
+        await prisma.task.createMany({
+          data: [
+            { title: 'Pending Task', ownerId: user.id, status: 'PENDING' },
+            { title: 'Completed Task', ownerId: user.id, status: 'COMPLETED' },
+          ],
+        });
+
+        return request(app.getHttpServer())
+          .get('/tasks?status=COMPLETED')
+          .set('Authorization', `Bearer ${accessToken}`)
+          .expect(200)
+          .then((res) => {
+            const body = res.body as PaginatedTaskResponse;
+            expect(body.total).toBe(1);
+            expect(body.data.length).toBe(1);
+            expect(body.data[0].status).toBe('COMPLETED');
+          });
+      });
+
+      it('should search tasks by title and description', async () => {
+        const hashedPassword = await bcrypt.hash('password123', 10);
+        const user = await prisma.user.create({
+          data: {
+            email: 'search-user@example.com',
+            password: hashedPassword,
+          },
+        });
+
+        const loginRes = await request(app.getHttpServer())
+          .post('/auth/login')
+          .send({ email: 'search-user@example.com', password: 'password123' });
+
+        const accessToken = (loginRes.body as LoginResponse).access_token;
+
+        await prisma.task.createMany({
+          data: [
+            {
+              title: 'Important Report',
+              description: 'A task about a report.',
+              ownerId: user.id,
+            },
+            {
+              title: 'Another Task',
+              description: 'This is something else.',
+              ownerId: user.id,
+            },
+            {
+              title: 'Final Presentation',
+              description: 'A presentation about something important.',
+              ownerId: user.id,
+            },
+          ],
+        });
+
+        return request(app.getHttpServer())
+          .get('/tasks?search=important')
+          .set('Authorization', `Bearer ${accessToken}`)
+          .expect(200)
+          .then((res) => {
+            const body = res.body as PaginatedTaskResponse;
+            expect(body.total).toBe(2);
+            expect(body.data.length).toBe(2);
           });
       });
     });
-
     describe('GET /tasks/:id', () => {
       it('should get a single task by ID for the authenticated user', async () => {
         const hashedPassword = await bcrypt.hash('password123', 10);
@@ -189,10 +320,8 @@ describe('App (e2e)', () => {
           .set('Authorization', `Bearer ${accessToken}`)
           .expect(200)
           .then((res) => {
-            expect(res.body as TaskResponse).toHaveProperty(
-              'title',
-              'Test Task for GET by ID',
-            );
+            const body = res.body as TaskResponse;
+            expect(body.title).toBe('Test Task for GET by ID');
           });
       });
 
@@ -261,7 +390,8 @@ describe('App (e2e)', () => {
           .send({ title: 'Updated Task' })
           .expect(200)
           .then((res) => {
-            expect((res.body as TaskResponse).title).toBe('Updated Task');
+            const body = res.body as TaskResponse;
+            expect(body.title).toBe('Updated Task');
           });
       });
 
